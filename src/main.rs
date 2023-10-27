@@ -1,59 +1,51 @@
-use indicatif::{ProgressBar, ProgressStyle};
-use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::path::Path;
+use std::ffi::OsStr;
+use indicatif::ProgressBar;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args: Vec<String> = env::args().collect();
-    if args.len() < 4 {
-        eprintln!("Usage: {} <output_dir> <input_dir1> <input_dir2> [...]", args[0]);
+fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() < 3 {
+        println!("Usage: {} <output_dir> <input_dir_1> <input_dir_2> ...", args[0]);
         std::process::exit(1);
     }
-    let output_dir = PathBuf::from(&args[1]);
-    if !output_dir.exists() {
-        fs::create_dir_all(&output_dir)?;
+
+    let output_dir = &args[1];
+    let input_dirs: Vec<&String> = args[2..].iter().collect();
+
+    let mut files = Vec::new();
+    let mut total_files = 0;
+    for dir in input_dirs.iter() {
+        let entries = fs::read_dir(dir).unwrap_or_else(|_| panic!("Failed to read directory: {}", dir));
+        let mut dir_files: Vec<String> = entries
+            .filter_map(Result::ok)
+            .map(|e| e.path())
+            .filter(|p| p.extension() == Some(OsStr::new("png")))
+            .map(|p| p.to_string_lossy().to_string())
+            .collect();
+        dir_files.sort();
+        total_files += dir_files.len();
+        files.push(dir_files);
     }
 
-    let mut all_files: Vec<Vec<PathBuf>> = vec![];
+    fs::create_dir_all(output_dir).unwrap_or_else(|_| panic!("Failed to create output directory: {}", output_dir));
 
-    for input_dir in &args[2..] {
-        let mut file_paths = vec![];
-        let input_path = PathBuf::from(input_dir);
-        if input_path.exists() && input_path.is_dir() {
-            for entry in fs::read_dir(input_path)? {
-                let entry = entry?;
-                let path = entry.path();
-                if entry.file_type()?.is_file() && path.extension().unwrap_or_default() == "png" {
-                    file_paths.push(path);
-                }
+    let progress_bar = ProgressBar::new(total_files as u64);
+    let mut count = 1;
+    loop {
+        let mut did_something = false;
+        for dir_files in files.iter_mut() {
+            if let Some(file) = dir_files.pop() {
+                let new_name = format!("{}/{:06}.png", output_dir, count);
+                fs::copy(&file, &new_name).unwrap_or_else(|_| panic!("Failed to copy file: {} to {}", file, new_name));
+                count += 1;
+                progress_bar.inc(1);
+                did_something = true;
             }
         }
-        file_paths.sort();
-        all_files.push(file_paths);
-    }
-
-    let max_len = all_files.iter().map(|v| v.len()).max().unwrap_or(0);
-
-    let pb = ProgressBar::new((max_len * all_files.len()) as u64);
-    pb.set_style(
-        ProgressStyle::default_bar()
-            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta})")
-            .progress_chars("#>-"),
-    );
-
-    let mut counter = 1;
-    for i in 0..max_len {
-        for files in &all_files {
-            if i < files.len() {
-                let new_name = format!("{:06}.png", counter);
-                let new_path = output_dir.join(new_name);
-                fs::copy(&files[i], &new_path)?;
-                pb.inc(1);
-                counter += 1;
-            }
+        if !did_something {
+            break;
         }
     }
-
-    pb.finish_with_message("Done!");
-    Ok(())
+    progress_bar.finish();
 }
