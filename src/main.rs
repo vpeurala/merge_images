@@ -22,8 +22,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if input_path.exists() && input_path.is_dir() {
             for entry in fs::read_dir(input_path)? {
                 let entry = entry?;
-                if entry.file_type()?.is_file() {
-                    file_paths.push(entry.path());
+                let path = entry.path();
+                if entry.file_type()?.is_file() && path.extension().unwrap_or_default() == "png" {
+                    file_paths.push(path);
                 }
             }
         }
@@ -56,4 +57,3 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     pb.finish_with_message("Done!");
     Ok(())
 }
-
