@@ -1,60 +1,59 @@
-use std::fs;
-use std::path::{Path, PathBuf};
-use walkdir::WalkDir;
-use regex::Regex;
 use indicatif::{ProgressBar, ProgressStyle};
+use std::env;
+use std::fs;
+use std::path::PathBuf;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Parse command line arguments
-    let args: Vec<String> = std::env::args().collect();
+    let args: Vec<String> = env::args().collect();
     if args.len() < 4 {
-        eprintln!("Usage: <output_directory> <input_directory1> <input_directory2> [...<input_directoryN>]");
+        eprintln!("Usage: {} <output_dir> <input_dir1> <input_dir2> [...]", args[0]);
         std::process::exit(1);
     }
-
     let output_dir = PathBuf::from(&args[1]);
-    let input_dirs: Vec<PathBuf> = args[2..].iter().map(|s| PathBuf::from(s)).collect();
-
-    // Create output directory if it doesn't exist
-    fs::create_dir_all(&output_dir)?;
-
-    // Collect all image files from input directories
-    let image_files: Vec<PathBuf> = input_dirs.iter()
-        .flat_map(|dir| {
-            WalkDir::new(dir)
-                .into_iter()
-                .filter_map(|e| e.ok())
-                .map(|e| e.into_path())
-                .filter(|path| {
-                    path.is_file() && is_image_file(&path)
-                })
-        })
-        .collect();
-
-    // Create progress bar
-    let progress_bar = ProgressBar::new(image_files.len() as u64);
-    progress_bar.set_style(ProgressStyle::default_bar()
-        .template("[{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} {msg}")
-        .progress_chars("##-"));
-
-    // Copy files to output directory
-    for (i, file) in image_files.iter().enumerate() {
-        let new_file_name = format!("{:06}.png", i + 1);
-        let new_file_path = output_dir.join(new_file_name);
-        fs::copy(file, &new_file_path)?;
-        progress_bar.inc(1);
+    if !output_dir.exists() {
+        fs::create_dir_all(&output_dir)?;
     }
 
-    progress_bar.finish_with_message("Images have been sorted and copied.");
+    let mut all_files: Vec<Vec<PathBuf>> = vec![];
 
+    for input_dir in &args[2..] {
+        let mut file_paths = vec![];
+        let input_path = PathBuf::from(input_dir);
+        if input_path.exists() && input_path.is_dir() {
+            for entry in fs::read_dir(input_path)? {
+                let entry = entry?;
+                if entry.file_type()?.is_file() {
+                    file_paths.push(entry.path());
+                }
+            }
+        }
+        file_paths.sort();
+        all_files.push(file_paths);
+    }
+
+    let max_len = all_files.iter().map(|v| v.len()).max().unwrap_or(0);
+
+    let pb = ProgressBar::new((max_len * all_files.len()) as u64);
+    pb.set_style(
+        ProgressStyle::default_bar()
+            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta})")
+            .progress_chars("#>-"),
+    );
+
+    let mut counter = 1;
+    for i in 0..max_len {
+        for files in &all_files {
+            if i < files.len() {
+                let new_name = format!("{:06}.png", counter);
+                let new_path = output_dir.join(new_name);
+                fs::copy(&files[i], &new_path)?;
+                pb.inc(1);
+                counter += 1;
+            }
+        }
+    }
+
+    pb.finish_with_message("Done!");
     Ok(())
-}
-
-fn is_image_file(path: &Path) -> bool {
-    if let Some(ext) = path.extension() {
-        let ext = ext.to_string_lossy().to_lowercase();
-        return ["png", "jpg", "jpeg"].contains(&&*ext);
-    }
-    false
 }
 
